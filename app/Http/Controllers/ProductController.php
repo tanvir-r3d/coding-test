@@ -3,10 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Models\Product;
-use App\Models\ProductVariant;
-use App\Models\ProductVariantPrice;
 use App\Models\Variant;
 use Illuminate\Http\Request;
+use App\Models\ProductVariant;
+use Illuminate\Support\Facades\DB;
+use App\Models\ProductVariantPrice;
+use App\Services\Product as ServicesProduct;
 
 class ProductController extends Controller
 {
@@ -15,9 +17,21 @@ class ProductController extends Controller
      *
      * @return \Illuminate\Contracts\Foundation\Application|\Illuminate\Contracts\View\Factory|\Illuminate\Http\Response|\Illuminate\View\View
      */
-    public function index()
+    public function index(Request $request)
     {
-        return view('products.index');
+
+        // dd($request->all());
+        $products = Product::with("variant_prices")
+            ->Filter($request)
+            ->paginate(2);
+        $variants = Variant::with('product_variations')->get()->map(function ($data) {
+            return [
+                "title" => $data->title,
+                "product_variations" => collect($data->product_variations)->unique('variant'),
+            ];
+        });
+        // dd($variants->toArray());
+        return view('products.index', compact('products', 'variants'));
     }
 
     /**
@@ -39,7 +53,19 @@ class ProductController extends Controller
      */
     public function store(Request $request)
     {
+        try {
+            DB::beginTransaction();
+            $product = new Product();
+            $product->fill($request->all())->save();
 
+            $productService = new ServicesProduct();
+            $productService->storeVariant($request, $product->id);
+            $productService->storeProductPrices($request, $product->id);
+            DB::commit();
+            return response()->json("Success", 201);
+        } catch (\Exception $e) {
+            return response()->json($e->getMessage(), 400);
+        }
     }
 
 
@@ -51,7 +77,6 @@ class ProductController extends Controller
      */
     public function show($product)
     {
-
     }
 
     /**
@@ -60,10 +85,11 @@ class ProductController extends Controller
      * @param \App\Models\Product $product
      * @return \Illuminate\Http\Response
      */
-    public function edit(Product $product)
+    public function edit($id)
     {
+        $product = Product::with(["variants", "variant_prices"])->findOrFail($id);
         $variants = Variant::all();
-        return view('products.edit', compact('variants'));
+        return view('products.edit', compact('variants', 'product'));
     }
 
     /**
@@ -75,7 +101,19 @@ class ProductController extends Controller
      */
     public function update(Request $request, Product $product)
     {
-        //
+        try {
+            DB::beginTransaction();
+            $product->fill($request->all())->save();
+
+            $productService = new ServicesProduct();
+            $productService->clearPreviousVariations($product->id);
+            $productService->storeVariant($request, $product->id);
+            $productService->storeProductPrices($request, $product->id);
+            DB::commit();
+            return response()->json("Updated", 201);
+        } catch (\Exception $e) {
+            return response()->json($e->getMessage(), 400);
+        }
     }
 
     /**
